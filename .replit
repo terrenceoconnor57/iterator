@@ -1,0 +1,11 @@
+run = "python scripts/generate.py && python scripts/iterate.py"
+language = "python3"
+entrypoint = "scripts/generate.py"
+
+[nix]
+channel = "stable-23_11"
+
+[deployment]
+run = ["python", "scripts/generate.py"]
+deploymentTarget = "cloudrun"
+

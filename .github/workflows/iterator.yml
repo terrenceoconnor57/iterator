@@ -1,0 +1,57 @@
+name: Iterator - Generate and Iterate Ideas
+
+on:
+  schedule:
+    # Run daily at 9 AM UTC (adjust as needed)
+    - cron: '0 9 * * *'
+  
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'both'
+        type: choice
+        options:
+          - both
+          - generate
+          - iterate
+
+permissions:
+  contents: write
+
+jobs:
+  run-iterator:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Generate new idea
+        if: ${{ github.event.inputs.action == 'generate' || github.event.inputs.action == 'both' || github.event_name == 'schedule' }}
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python scripts/generate.py
+      
+      - name: Iterate all ideas
+        if: ${{ github.event.inputs.action == 'iterate' || github.event.inputs.action == 'both' || github.event_name == 'schedule' }}
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python scripts/iterate.py
+      
+      - name: Commit and push changes
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add data/ideas.json
+          git diff --staged --quiet || git commit -m "🤖 Iterator run: $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+          git push
+
