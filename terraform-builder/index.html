@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Terraform Visual Builder</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🏗️ Terraform Visual Builder</h1>
+            <p>Drag and drop AWS resources to build your infrastructure</p>
+        </header>
+
+        <div class="main-content">
+            <!-- Resource Palette -->
+            <aside class="resource-palette">
+                <h2>Resources</h2>
+                <div class="resource-list">
+                    <div class="resource-item" draggable="true" data-type="vpc">
+                        <div class="resource-icon vpc-icon">🌐</div>
+                        <span>VPC</span>
+                    </div>
+                    <div class="resource-item" draggable="true" data-type="subnet">
+                        <div class="resource-icon subnet-icon">📡</div>
+                        <span>Subnet</span>
+                    </div>
+                    <div class="resource-item" draggable="true" data-type="ec2">
+                        <div class="resource-icon ec2-icon">🖥️</div>
+                        <span>EC2 Instance</span>
+                    </div>
+                    <div class="resource-item" draggable="true" data-type="security-group">
+                        <div class="resource-icon sg-icon">🔒</div>
+                        <span>Security Group</span>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Canvas -->
+            <main class="canvas-container">
+                <div class="canvas-header">
+                    <button id="clearBtn" class="btn btn-secondary">Clear All</button>
+                    <button id="generateBtn" class="btn btn-primary">Generate Terraform</button>
+                </div>
+                <div id="canvas" class="canvas">
+                    <div class="canvas-placeholder">
+                        Drag resources here to start building
+                    </div>
+                </div>
+            </main>
+
+            <!-- Properties Panel -->
+            <aside class="properties-panel">
+                <h2>Properties</h2>
+                <div id="propertiesContent" class="properties-content">
+                    <p class="no-selection">Select a resource to edit its properties</p>
+                </div>
+            </aside>
+        </div>
+
+        <!-- Terraform Output Modal -->
+        <div id="terraformModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Generated Terraform Code</h2>
+                    <button class="close-btn" id="closeModal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <pre id="terraformCode"></pre>
+                </div>
+                <div class="modal-footer">
+                    <button id="copyBtn" class="btn btn-primary">Copy to Clipboard</button>
+                    <button id="downloadBtn" class="btn btn-secondary">Download main.tf</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
+

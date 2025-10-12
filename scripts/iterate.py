@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Iterate all existing ideas - evolve, improve, and refine them.
-Uses OpenAI API if OPENAI_API_KEY is available, otherwise uses deterministic fallback.
+Iterate all existing ideas - scan existing projects and generate/update working code.
+Creates actual Replit-ready applications for each idea.
+Uses OpenAI API if OPENAI_API_KEY is available, otherwise uses template-based generation.
 """
 
 import json
@@ -13,143 +14,14 @@ from pathlib import Path
 from typing import Dict, List
 import urllib.request
 import urllib.error
+import re
 
 # Paths
 SCRIPT_DIR = Path(__file__).parent
-DATA_DIR = SCRIPT_DIR.parent / "data"
+ROOT_DIR = SCRIPT_DIR.parent
+DATA_DIR = ROOT_DIR / "data"
 STATE_FILE = DATA_DIR / "ideas.json"
-
-# Iteration strategies (deterministic fallback)
-ITERATION_STRATEGIES = [
-    {
-        "name": "Feature Expansion",
-        "description": "Add a complementary feature set that extends the core value proposition",
-        "examples": [
-            "AI-powered analytics and insights",
-            "Advanced automation capabilities",
-            "Mobile and offline support",
-            "Enterprise SSO and security features",
-            "Marketplace or ecosystem integrations",
-            "White-label and reseller options",
-            "Advanced reporting and dashboards",
-            "Workflow customization engine",
-            "API and webhook platform",
-            "Real-time collaboration tools"
-        ]
-    },
-    {
-        "name": "Market Expansion",
-        "description": "Identify an adjacent market or use case that could benefit from the product",
-        "examples": [
-            "Expand from SMB to enterprise segment",
-            "Launch vertical-specific version for {industry}",
-            "Add international support and localization",
-            "Create lighter version for individual users",
-            "Partner with larger platforms for distribution",
-            "Introduce freemium tier to accelerate adoption",
-            "Target different department (from IT to Product)",
-            "Expand from web to mobile-native experience",
-            "Add cross-industry capabilities",
-            "Launch partner program for resellers"
-        ]
-    },
-    {
-        "name": "Technical Evolution",
-        "description": "Improve the technical architecture or implementation approach",
-        "examples": [
-            "Migrate to edge computing for better latency",
-            "Add real-time processing and streaming",
-            "Implement advanced caching and optimization",
-            "Build native mobile apps with offline-first design",
-            "Add blockchain for transparency and trust",
-            "Integrate vector databases for semantic search",
-            "Implement federated learning for privacy",
-            "Add GraphQL API alongside REST",
-            "Build plugin architecture for extensibility",
-            "Introduce infrastructure automation"
-        ]
-    },
-    {
-        "name": "Business Model Innovation",
-        "description": "Evolve the monetization or go-to-market strategy",
-        "examples": [
-            "Add usage-based pricing tier",
-            "Introduce marketplace transaction fees",
-            "Launch premium support packages",
-            "Create certification and training programs",
-            "Add professional services offering",
-            "Implement revenue sharing with partners",
-            "Launch managed service tier",
-            "Add white-label licensing option",
-            "Introduce outcome-based pricing",
-            "Create platform fee for third-party apps"
-        ]
-    },
-    {
-        "name": "User Experience Enhancement",
-        "description": "Significantly improve the user experience or interface",
-        "examples": [
-            "Add AI assistant for natural language interactions",
-            "Implement smart recommendations and personalization",
-            "Create guided onboarding and tutorials",
-            "Build visual workflow designer (no-code)",
-            "Add customizable templates and presets",
-            "Implement predictive suggestions",
-            "Create command palette for power users",
-            "Add accessibility features (WCAG AAA)",
-            "Implement progressive disclosure for complexity",
-            "Build interactive data visualizations"
-        ]
-    },
-    {
-        "name": "Integration & Ecosystem",
-        "description": "Expand integrations and ecosystem partnerships",
-        "examples": [
-            "Build native integrations with top 10 platforms",
-            "Launch app marketplace for third-party extensions",
-            "Add Zapier/Make integration support",
-            "Integrate with major cloud providers",
-            "Build Slack/Teams/Discord bots",
-            "Add calendar and scheduling integrations",
-            "Integrate with CRM and marketing tools",
-            "Support data warehouse connectors",
-            "Add GitHub/GitLab/Bitbucket apps",
-            "Create browser extensions"
-        ]
-    },
-    {
-        "name": "Data & Intelligence",
-        "description": "Leverage data and AI to add intelligence layer",
-        "examples": [
-            "Add predictive analytics and forecasting",
-            "Implement anomaly detection and alerting",
-            "Build recommendation engine",
-            "Add natural language processing for insights",
-            "Create automated report generation",
-            "Implement intelligent automation triggers",
-            "Add benchmarking against industry data",
-            "Build custom ML model training",
-            "Implement sentiment analysis",
-            "Add pattern recognition and insights"
-        ]
-    },
-    {
-        "name": "Compliance & Security",
-        "description": "Enhance security, privacy, and compliance features",
-        "examples": [
-            "Achieve SOC 2 Type II certification",
-            "Add GDPR compliance tools and data portability",
-            "Implement end-to-end encryption",
-            "Add audit logging and compliance reporting",
-            "Build advanced permission management",
-            "Implement data residency options",
-            "Add HIPAA compliance for healthcare",
-            "Build zero-knowledge architecture",
-            "Implement advanced threat detection",
-            "Add SAML and advanced auth options"
-        ]
-    }
-]
+PROJECTS_DIR = ROOT_DIR / "projects"
 
 
 def load_state() -> Dict:
@@ -168,42 +40,96 @@ def save_state(state: Dict) -> None:
         json.dump(state, f, indent=2)
 
 
-def iterate_with_openai(idea: Dict, api_key: str) -> Dict:
-    """Iterate an idea using OpenAI API."""
-    prompt = f"""You are helping evolve and improve a product idea through iteration. Here's the current idea:
+def sanitize_project_name(title: str) -> str:
+    """Convert idea title to valid directory name."""
+    # Remove special characters, convert to lowercase, replace spaces with hyphens
+    name = re.sub(r'[^a-zA-Z0-9\s-]', '', title)
+    name = re.sub(r'\s+', '-', name.strip())
+    name = name.lower()[:50]  # Limit length
+    return name or "unnamed-project"
+
+
+def get_project_dir(idea: Dict) -> Path:
+    """Get the project directory for an idea."""
+    project_name = sanitize_project_name(idea['title'])
+    return PROJECTS_DIR / f"idea-{idea['id']}-{project_name}"
+
+
+def scan_existing_project(project_dir: Path) -> Dict:
+    """Scan an existing project and return info about it."""
+    if not project_dir.exists():
+        return {"exists": False, "files": []}
+    
+    files = []
+    for item in project_dir.rglob('*'):
+        if item.is_file() and not any(skip in str(item) for skip in ['.git', '__pycache__', 'node_modules', '.env']):
+            files.append(str(item.relative_to(project_dir)))
+    
+    return {
+        "exists": True,
+        "files": files,
+        "file_count": len(files)
+    }
+
+
+def generate_code_with_openai(idea: Dict, project_info: Dict, api_key: str) -> Dict:
+    """Generate or iterate code for an idea using OpenAI."""
+    
+    if project_info["exists"]:
+        action = "iterate and improve"
+        context = f"The project already exists with {project_info['file_count']} files: {', '.join(project_info['files'][:10])}"
+    else:
+        action = "create from scratch"
+        context = "This is a new project"
+    
+    prompt = f"""You are building a working application for this idea:
 
 Title: {idea['title']}
 Description: {idea['description']}
 Category: {idea['category']}
-Current Iteration: {idea['iteration']}
-
 Target Audience: {idea['target_audience']}
-Key Features: {', '.join(idea['key_features'])}
-Monetization: {idea['monetization']}
+Key Features: {', '.join(idea['key_features'][:5])}
 Technical Approach: {idea['technical_approach']}
 
-Generate the NEXT iteration of this idea by:
-1. Identifying a specific way to evolve, expand, or improve it
-2. Keeping the core concept but making it more valuable, feasible, or differentiated
-3. Being specific and actionable (not generic)
+Current Status: {context}
+Action: {action} this project (iteration {idea['iteration'] + 1})
 
-Respond with a JSON object containing:
+Generate a complete, working web application. Focus on creating a MINIMAL but FUNCTIONAL MVP.
+
+Respond with JSON containing the file structure:
 {{
-  "iteration_type": "What kind of iteration (e.g., Feature Expansion, Market Expansion, etc.)",
-  "changes_summary": "Brief summary of what's changing",
-  "updated_description": "Updated 2-3 sentence description incorporating the changes",
-  "new_features": ["Any new features being added"],
-  "rationale": "Why this iteration makes the product more valuable"
-}}"""
+  "files": [
+    {{
+      "path": "main.py",
+      "content": "# Complete file content here..."
+    }},
+    {{
+      "path": "templates/index.html",
+      "content": "<!-- Complete HTML here -->"
+    }}
+  ],
+  "entry_point": "main.py",
+  "description": "Brief description of what was implemented",
+  "next_steps": ["feature 1", "feature 2"]
+}}
+
+Guidelines:
+- Create a simple Python web app (Flask or http.server)
+- Use only Python stdlib or include requirements.txt
+- Make it immediately runnable in Replit
+- Include a simple, functional UI
+- Focus on core value proposition
+- Keep it under 500 lines total
+"""
 
     try:
         data = json.dumps({
             "model": "gpt-4o-mini",
             "messages": [
-                {"role": "system", "content": "You are an expert product strategist who helps evolve product ideas through thoughtful iteration."},
+                {"role": "system", "content": "You are an expert full-stack developer who builds clean, working MVPs."},
                 {"role": "user", "content": prompt}
             ],
-            "temperature": 0.8,
+            "temperature": 0.7,
             "response_format": {"type": "json_object"}
         }).encode('utf-8')
 
@@ -216,177 +142,619 @@ Respond with a JSON object containing:
             }
         )
 
-        with urllib.request.urlopen(req, timeout=30) as response:
+        with urllib.request.urlopen(req, timeout=60) as response:
             result = json.loads(response.read().decode('utf-8'))
             content = result['choices'][0]['message']['content']
-            iteration_data = json.loads(content)
-            return iteration_data
+            code_data = json.loads(content)
+            return code_data
 
-    except urllib.error.HTTPError as e:
-        print(f"OpenAI API error: {e.code} - {e.read().decode('utf-8')}", file=sys.stderr)
-        raise
     except Exception as e:
-        print(f"Error calling OpenAI API: {e}", file=sys.stderr)
+        print(f"  ! OpenAI code generation failed: {e}")
         raise
 
 
-def deterministic_choice(seed: str, options: List) -> any:
-    """Make a deterministic choice based on a seed."""
-    hash_val = int(hashlib.sha256(seed.encode()).hexdigest(), 16)
-    return options[hash_val % len(options)]
+def generate_code_template(idea: Dict, project_info: Dict) -> Dict:
+    """Generate code using templates (fallback when no API key)."""
+    
+    # Determine app type from category
+    category = idea['category']
+    
+    if category == "Developer Tools":
+        return generate_dev_tools_template(idea)
+    elif category == "SaaS & Productivity":
+        return generate_saas_template(idea)
+    elif category in ["Infrastructure & DevOps", "AI & Machine Learning"]:
+        return generate_api_service_template(idea)
+    elif category == "Niche Marketplaces":
+        return generate_marketplace_template(idea)
+    elif category == "Fintech & Business":
+        return generate_dashboard_template(idea)
+    else:
+        return generate_generic_web_app(idea)
 
 
-def iterate_fallback(idea: Dict) -> Dict:
-    """Iterate an idea using deterministic fallback."""
-    # Use idea ID and iteration number as seed
-    seed = f"iterate_{idea['id']}_{idea['iteration']}"
+def generate_dev_tools_template(idea: Dict) -> Dict:
+    """Generate a developer tool web app."""
+    main_py = f'''#!/usr/bin/env python3
+"""
+{idea['title']}
+{idea['description']}
+"""
+
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+import json
+import urllib.parse
+from pathlib import Path
+
+class AppHandler(SimpleHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/' or self.path == '/index.html':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+            html = Path('index.html').read_text()
+            self.wfile.write(html.encode())
+        else:
+            super().do_GET()
     
-    # Select iteration strategy
-    strategy = deterministic_choice(seed + "_strategy", ITERATION_STRATEGIES)
-    iteration_type = strategy["name"]
+    def do_POST(self):
+        if self.path == '/api/analyze':
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            data = json.loads(post_data.decode('utf-8'))
+            
+            # Process the input
+            result = {{
+                "status": "success",
+                "message": f"Processed: {{data.get('input', '')}}",
+                "results": [
+                    "Analysis result 1",
+                    "Analysis result 2",
+                    "Recommendation 3"
+                ]
+            }}
+            
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(result).encode())
+
+if __name__ == '__main__':
+    port = 8080
+    server = HTTPServer(('0.0.0.0', port), AppHandler)
+    print(f"🚀 {idea['title']}")
+    print(f"📡 Server running at http://0.0.0.0:{{port}}")
+    server.serve_forever()
+'''
+
+    index_html = f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{idea['title']}</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }}
+        .container {{
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }}
+        h1 {{
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2em;
+        }}
+        .subtitle {{
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 1.1em;
+        }}
+        .input-group {{
+            margin-bottom: 20px;
+        }}
+        label {{
+            display: block;
+            margin-bottom: 8px;
+            color: #555;
+            font-weight: 600;
+        }}
+        textarea, input {{
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }}
+        textarea {{
+            min-height: 120px;
+            font-family: monospace;
+        }}
+        textarea:focus, input:focus {{
+            outline: none;
+            border-color: #667eea;
+        }}
+        button {{
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 14px 32px;
+            font-size: 16px;
+            font-weight: 600;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }}
+        button:hover {{
+            transform: translateY(-2px);
+        }}
+        button:active {{
+            transform: translateY(0);
+        }}
+        .results {{
+            margin-top: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 12px;
+            display: none;
+        }}
+        .results.show {{
+            display: block;
+        }}
+        .result-item {{
+            padding: 12px;
+            margin: 8px 0;
+            background: white;
+            border-left: 4px solid #667eea;
+            border-radius: 4px;
+        }}
+        .features {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 30px 0;
+        }}
+        .feature {{
+            padding: 15px;
+            background: #f0f0f0;
+            border-radius: 8px;
+            text-align: center;
+        }}
+        .loading {{
+            display: none;
+            text-align: center;
+            margin: 20px 0;
+        }}
+        .loading.show {{
+            display: block;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 {idea['title']}</h1>
+        <p class="subtitle">{idea['description'][:200]}</p>
+        
+        <div class="features">
+            {''.join(f'<div class="feature">✨ {feature}</div>' for feature in idea['key_features'][:3])}
+        </div>
+        
+        <div class="input-group">
+            <label for="input">Enter Your Data:</label>
+            <textarea id="input" placeholder="Paste your code, config, or data here..."></textarea>
+        </div>
+        
+        <button onclick="analyze()">Analyze Now</button>
+        
+        <div class="loading" id="loading">
+            <p>⚡ Processing...</p>
+        </div>
+        
+        <div class="results" id="results">
+            <h3>Results:</h3>
+            <div id="results-content"></div>
+        </div>
+    </div>
     
-    # Select specific change from strategy examples
-    change = deterministic_choice(seed + "_change", strategy["examples"])
-    
-    # Generate changes summary
-    changes_summary = f"{iteration_type}: {change}"
-    
-    # Update description with the iteration
-    updated_description = f"{idea['description']} In this iteration, we're implementing {change.lower()} to {strategy['description'].lower()}."
-    
-    # Generate new features based on the strategy
-    new_features = []
-    feature_count = deterministic_choice(seed + "_count", [1, 2, 2, 3])  # Weighted towards 2
-    
-    feature_pool = {
-        "Feature Expansion": [
-            "Advanced AI-powered insights and recommendations",
-            "Automated workflow orchestration",
-            "Real-time collaboration and team features",
-            "Custom reporting and analytics dashboards",
-            "Mobile app with offline capabilities"
-        ],
-        "Market Expansion": [
-            "Multi-language and localization support",
-            "Industry-specific templates and workflows",
-            "Enterprise-grade security and compliance",
-            "Self-service onboarding and tutorials",
-            "Partner and reseller portal"
-        ],
-        "Technical Evolution": [
-            "Edge computing for reduced latency",
-            "Advanced caching and performance optimization",
-            "Blockchain-based audit trail",
-            "GraphQL API with real-time subscriptions",
-            "Plugin architecture for extensibility"
-        ],
-        "Business Model Innovation": [
-            "Usage-based pricing model",
-            "Professional services and consulting",
-            "Premium support with SLA guarantees",
-            "White-label and reseller options",
-            "Revenue sharing partner program"
-        ],
-        "User Experience Enhancement": [
-            "AI assistant with natural language interface",
-            "Visual workflow designer (no-code/low-code)",
-            "Smart templates and presets",
-            "Personalized recommendations engine",
-            "Command palette for power users"
-        ],
-        "Integration & Ecosystem": [
-            "Native integrations with top platforms",
-            "Third-party app marketplace",
-            "Zapier and Make.com connectors",
-            "Slack and Microsoft Teams bots",
-            "Browser extension and bookmarklet"
-        ],
-        "Data & Intelligence": [
-            "Predictive analytics and forecasting",
-            "Automated anomaly detection and alerts",
-            "Custom ML model training",
-            "Industry benchmarking and insights",
-            "Natural language report generation"
-        ],
-        "Compliance & Security": [
-            "SOC 2 Type II certification",
-            "End-to-end encryption at rest and in transit",
-            "Advanced audit logging and compliance reports",
-            "GDPR and CCPA data tools",
-            "Role-based access control (RBAC)"
-        ]
-    }
-    
-    available_features = feature_pool.get(iteration_type, feature_pool["Feature Expansion"])
-    for i in range(feature_count):
-        new_feature = deterministic_choice(f"{seed}_newfeature_{i}", available_features)
-        if new_feature not in new_features:
-            new_features.append(new_feature)
-    
-    # Generate rationale
-    rationale_options = [
-        f"This iteration expands the value proposition by {change.lower()}, opening up new revenue opportunities and increasing customer lifetime value.",
-        f"By {change.lower()}, we address a key market need and differentiate from competitors, leading to higher conversion and retention.",
-        f"This evolution enhances the core offering through {change.lower()}, making the product more indispensable to our target users.",
-        f"Implementing {change.lower()} reduces friction in adoption and positions us for scale in the next phase of growth.",
-        f"This strategic iteration leverages {change.lower()} to create a more defensible market position and sustainable competitive advantage."
-    ]
-    rationale = deterministic_choice(seed + "_rationale", rationale_options)
-    
+    <script>
+        async function analyze() {{
+            const input = document.getElementById('input').value;
+            if (!input.trim()) {{
+                alert('Please enter some data to analyze');
+                return;
+            }}
+            
+            document.getElementById('loading').classList.add('show');
+            document.getElementById('results').classList.remove('show');
+            
+            try {{
+                const response = await fetch('/api/analyze', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{ input }})
+                }});
+                
+                const data = await response.json();
+                
+                const resultsHTML = data.results.map(r => 
+                    `<div class="result-item">${{r}}</div>`
+                ).join('');
+                
+                document.getElementById('results-content').innerHTML = resultsHTML;
+                document.getElementById('results').classList.add('show');
+            }} catch (error) {{
+                alert('Error: ' + error.message);
+            }} finally {{
+                document.getElementById('loading').classList.remove('show');
+            }}
+        }}
+    </script>
+</body>
+</html>
+'''
+
+    readme = f'''# {idea['title']}
+
+{idea['description']}
+
+## Features
+
+{chr(10).join(f"- {feature}" for feature in idea['key_features'][:5])}
+
+## Target Audience
+
+{idea['target_audience']}
+
+## How to Run
+
+```bash
+python3 main.py
+```
+
+Then visit http://localhost:8080
+
+## Technical Stack
+
+{idea['technical_approach']}
+
+## Iteration
+
+Current iteration: {idea['iteration'] + 1}
+Created: {idea['created_at']}
+'''
+
     return {
-        "iteration_type": iteration_type,
-        "changes_summary": changes_summary,
-        "updated_description": updated_description,
-        "new_features": new_features,
-        "rationale": rationale
+        "files": [
+            {"path": "main.py", "content": main_py},
+            {"path": "index.html", "content": index_html},
+            {"path": "README.md", "content": readme}
+        ],
+        "entry_point": "main.py",
+        "description": f"Generated MVP for {idea['title']}",
+        "next_steps": ["Add authentication", "Implement data persistence", "Add more features"]
     }
+
+
+def generate_saas_template(idea: Dict) -> Dict:
+    """Generate a SaaS dashboard application."""
+    main_py = f'''#!/usr/bin/env python3
+"""
+{idea['title']} - SaaS Dashboard
+"""
+
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+import json
+from pathlib import Path
+
+class DashboardHandler(SimpleHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/' or self.path == '/index.html':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+            html = Path('index.html').read_text()
+            self.wfile.write(html.encode())
+        elif self.path == '/api/stats':
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            stats = {{
+                "users": 1234,
+                "active": 567,
+                "revenue": 45678,
+                "growth": 23.5
+            }}
+            self.wfile.write(json.dumps(stats).encode())
+        else:
+            super().do_GET()
+
+if __name__ == '__main__':
+    port = 8080
+    server = HTTPServer(('0.0.0.0', port), DashboardHandler)
+    print(f"🚀 {{idea['title']}}")
+    print(f"📊 Dashboard at http://0.0.0.0:{{port}}")
+    server.serve_forever()
+'''
+
+    index_html = f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{idea['title']}</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #f5f7fa;
+        }}
+        .header {{
+            background: white;
+            padding: 20px 40px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }}
+        h1 {{
+            color: #2c3e50;
+            font-size: 1.8em;
+        }}
+        .dashboard {{
+            padding: 40px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }}
+        .stats {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 40px;
+        }}
+        .stat-card {{
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }}
+        .stat-value {{
+            font-size: 2.5em;
+            font-weight: bold;
+            color: #3498db;
+            margin: 10px 0;
+        }}
+        .stat-label {{
+            color: #7f8c8d;
+            font-size: 0.9em;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }}
+        .features {{
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }}
+        h2 {{
+            color: #2c3e50;
+            margin-bottom: 20px;
+        }}
+        .feature-list {{
+            list-style: none;
+        }}
+        .feature-list li {{
+            padding: 12px 0;
+            border-bottom: 1px solid #ecf0f1;
+        }}
+        .feature-list li:before {{
+            content: "✓ ";
+            color: #27ae60;
+            font-weight: bold;
+            margin-right: 10px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📊 {idea['title']}</h1>
+    </div>
+    
+    <div class="dashboard">
+        <div class="stats" id="stats">
+            <div class="stat-card">
+                <div class="stat-label">Total Users</div>
+                <div class="stat-value" id="users">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Active Now</div>
+                <div class="stat-value" id="active">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Revenue</div>
+                <div class="stat-value" id="revenue">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Growth</div>
+                <div class="stat-value" id="growth">-</div>
+            </div>
+        </div>
+        
+        <div class="features">
+            <h2>Key Features</h2>
+            <ul class="feature-list">
+                {''.join(f'<li>{feature}</li>' for feature in idea['key_features'][:5])}
+            </ul>
+        </div>
+    </div>
+    
+    <script>
+        async function loadStats() {{
+            try {{
+                const response = await fetch('/api/stats');
+                const data = await response.json();
+                
+                document.getElementById('users').textContent = data.users.toLocaleString();
+                document.getElementById('active').textContent = data.active.toLocaleString();
+                document.getElementById('revenue').textContent = '$' + data.revenue.toLocaleString();
+                document.getElementById('growth').textContent = data.growth + '%';
+            }} catch (error) {{
+                console.error('Error loading stats:', error);
+            }}
+        }}
+        
+        loadStats();
+        setInterval(loadStats, 5000);
+    </script>
+</body>
+</html>
+'''
+
+    readme = f'''# {idea['title']}
+
+{idea['description']}
+
+## Dashboard Features
+
+{chr(10).join(f"- {feature}" for feature in idea['key_features'][:5])}
+
+## Run
+
+```bash
+python3 main.py
+```
+
+Visit http://localhost:8080
+'''
+
+    return {
+        "files": [
+            {"path": "main.py", "content": main_py},
+            {"path": "index.html", "content": index_html},
+            {"path": "README.md", "content": readme}
+        ],
+        "entry_point": "main.py",
+        "description": f"SaaS dashboard for {idea['title']}",
+        "next_steps": ["Add user authentication", "Implement real data storage", "Add charts"]
+    }
+
+
+def generate_api_service_template(idea: Dict) -> Dict:
+    """Generate an API service."""
+    return generate_dev_tools_template(idea)  # Similar structure
+
+
+def generate_marketplace_template(idea: Dict) -> Dict:
+    """Generate a marketplace application."""
+    return generate_saas_template(idea)  # Similar dashboard structure
+
+
+def generate_dashboard_template(idea: Dict) -> Dict:
+    """Generate a fintech/business dashboard."""
+    return generate_saas_template(idea)
+
+
+def generate_generic_web_app(idea: Dict) -> Dict:
+    """Generate a generic web application."""
+    return generate_dev_tools_template(idea)
+
+
+def write_project_files(project_dir: Path, files_data: Dict) -> None:
+    """Write generated files to the project directory."""
+    project_dir.mkdir(parents=True, exist_ok=True)
+    
+    for file_info in files_data['files']:
+        file_path = project_dir / file_info['path']
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(file_info['content'])
+        
+        # Make Python files executable
+        if file_path.suffix == '.py':
+            file_path.chmod(0o755)
+    
+    # Create .replit file
+    entry_point = files_data.get('entry_point', 'main.py')
+    replit_config = f'''run = "python3 {entry_point}"
+language = "python3"
+entrypoint = "{entry_point}"
+
+[nix]
+channel = "stable-23_11"
+'''
+    (project_dir / '.replit').write_text(replit_config)
+    
+    # Create replit.nix
+    replit_nix = '''{ pkgs }: {
+  deps = [
+    pkgs.python311
+  ];
+}
+'''
+    (project_dir / 'replit.nix').write_text(replit_nix)
 
 
 def iterate_idea(idea: Dict, api_key: str = None) -> Dict:
-    """Iterate a single idea."""
-    if api_key:
-        try:
-            iteration_data = iterate_with_openai(idea, api_key)
-            print(f"  ✓ Iterated using OpenAI")
-        except Exception as e:
-            print(f"  ! OpenAI failed, using fallback: {e}")
-            iteration_data = iterate_fallback(idea)
-    else:
-        iteration_data = iterate_fallback(idea)
-        print(f"  ✓ Iterated using fallback")
+    """Iterate a single idea by generating/updating its code."""
+    project_dir = get_project_dir(idea)
+    project_info = scan_existing_project(project_dir)
     
-    # Create history entry for current state before updating
-    history_entry = {
-        "iteration": idea["iteration"],
-        "timestamp": idea["updated_at"],
-        "description": idea["description"],
-        "key_features": idea["key_features"]
-    }
+    print(f"  Project: {project_dir.name}")
+    print(f"  Status: {'Exists' if project_info['exists'] else 'New'}")
     
-    # Update idea with iteration
-    idea["iteration"] += 1
-    idea["updated_at"] = datetime.now().isoformat()
-    idea["description"] = iteration_data["updated_description"]
-    
-    # Add new features to existing features
-    for new_feature in iteration_data["new_features"]:
-        if new_feature not in idea["key_features"]:
-            idea["key_features"].append(new_feature)
-    
-    # Add to history with iteration details
-    history_entry["iteration_type"] = iteration_data["iteration_type"]
-    history_entry["changes_summary"] = iteration_data["changes_summary"]
-    history_entry["rationale"] = iteration_data["rationale"]
-    
-    idea["history"].append(history_entry)
-    
-    return iteration_data
+    # Generate code
+    try:
+        if api_key:
+            print(f"  Generating code with OpenAI...")
+            code_data = generate_code_with_openai(idea, project_info, api_key)
+        else:
+            print(f"  Generating code from templates...")
+            code_data = generate_code_template(idea, project_info)
+        
+        # Write files
+        write_project_files(project_dir, code_data)
+        print(f"  ✓ Generated {len(code_data['files'])} files")
+        
+        # Update idea metadata
+        idea["iteration"] += 1
+        idea["updated_at"] = datetime.now().isoformat()
+        idea["project_path"] = str(project_dir.relative_to(ROOT_DIR))
+        
+        # Add to history
+        history_entry = {
+            "iteration": idea["iteration"],
+            "timestamp": idea["updated_at"],
+            "description": code_data.get("description", "Code generated"),
+            "files_created": len(code_data['files']),
+            "next_steps": code_data.get("next_steps", [])
+        }
+        idea["history"].append(history_entry)
+        
+        return code_data
+        
+    except Exception as e:
+        print(f"  ✗ Error generating code: {e}")
+        # Still increment iteration but mark as failed
+        idea["iteration"] += 1
+        idea["updated_at"] = datetime.now().isoformat()
+        idea["history"].append({
+            "iteration": idea["iteration"],
+            "timestamp": idea["updated_at"],
+            "description": f"Code generation failed: {str(e)}",
+            "error": True
+        })
+        return {"error": str(e)}
 
 
 def main():
-    """Main function to iterate all ideas."""
+    """Main function to iterate all ideas and generate code."""
     print("=" * 60)
-    print("ITERATOR - Iterate All Ideas")
+    print("ITERATOR - Generate Code for All Ideas")
     print("=" * 60)
     
     # Load current state
@@ -396,26 +764,31 @@ def main():
         print("\nNo ideas to iterate. Run generate.py first.")
         return
     
-    print(f"\nFound {len(state['ideas'])} ideas to iterate")
+    print(f"\nFound {len(state['ideas'])} ideas")
+    print(f"Projects directory: {PROJECTS_DIR.relative_to(ROOT_DIR)}\n")
+    
+    # Create projects directory
+    PROJECTS_DIR.mkdir(exist_ok=True)
     
     # Check for API key
     api_key = os.environ.get("OPENAI_API_KEY")
     if api_key:
-        print("Using OpenAI API for iterations...")
+        print("Using OpenAI API for code generation...")
     else:
-        print("No OPENAI_API_KEY found, using deterministic generator...")
+        print("No OPENAI_API_KEY found, using template-based generation...")
     
     print()
     
     # Iterate each idea
     for idx, idea in enumerate(state["ideas"], 1):
-        print(f"[{idx}/{len(state['ideas'])}] Iterating: {idea['title']}")
+        print(f"[{idx}/{len(state['ideas'])}] {idea['title']}")
+        print(f"  Category: {idea['category']}")
         print(f"  Current iteration: {idea['iteration']}")
         
-        iteration_data = iterate_idea(idea, api_key)
+        result = iterate_idea(idea, api_key)
         
-        print(f"  → {iteration_data['iteration_type']}")
-        print(f"  → {iteration_data['changes_summary']}")
+        if "error" not in result:
+            print(f"  → Next steps: {', '.join(result.get('next_steps', [])[:2])}")
         print()
     
     # Update metadata
@@ -428,11 +801,11 @@ def main():
     save_state(state)
     
     print("=" * 60)
-    print(f"✓ Successfully iterated {len(state['ideas'])} ideas")
+    print(f"✓ Successfully generated/updated {len(state['ideas'])} projects")
+    print(f"Projects location: {PROJECTS_DIR}")
     print(f"State saved to: {STATE_FILE}")
     print("=" * 60)
 
 
 if __name__ == "__main__":
     main()
-

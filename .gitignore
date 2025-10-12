@@ -38,3 +38,6 @@ wheels/
 # Logs
 *.log
 
+# Note: We DO commit generated projects to show the results
+# If you want to ignore them, uncomment below:
+# projects/
