@@ -191,7 +191,7 @@ Respond with a JSON object containing:
 
     try:
         data = json.dumps({
-            "model": "gpt-4",
+            "model": "gpt-4o-mini",
             "messages": [
                 {"role": "system", "content": "You are an expert product strategist and startup advisor who generates innovative, high-value product ideas."},
                 {"role": "user", "content": prompt}
